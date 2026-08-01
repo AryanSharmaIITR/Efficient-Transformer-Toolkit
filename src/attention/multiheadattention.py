@@ -3,10 +3,10 @@ import torch
 from .base import BaseAttention
 
 class MultiHeadAttention(BaseAttention):
-    def __init__(self, d_model, n_heads, dropout=0.1):
-        super().__init__(d_model, n_heads, dropout)
+    def __init__(self, d_model, n_heads, dropout=0.1, casual=False):
+        super().__init__(d_model, n_heads, dropout, casual)
 
-    def forward(self, query, key, value, mask=None, casual=False):
+    def forward(self, query, key, value, mask=None):
         batch_size = query.size(0)
 
         Q = self.Wq(query)
@@ -22,7 +22,7 @@ class MultiHeadAttention(BaseAttention):
         if mask is not None:
             scores = scores.masked_fill(mask == 0, float('-inf'))
 
-        if casual:
+        if self.casual:
             seq_len = scores.size(-1)
             casual_mask = torch.tril(torch.ones(seq_len, seq_len)).to(scores.device)
             scores = scores.masked_fill(casual_mask == 0, float('-inf'))
