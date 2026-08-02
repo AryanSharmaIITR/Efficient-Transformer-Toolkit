@@ -3,7 +3,7 @@ from torch.nn import nn
 from abc import ABC, abstractmethod
 
 class BaseAttention(nn.Module, ABC):
-    def __init__(self, d_model, n_heads, dropout=0.1, casual=False):
+    def __init__(self, d_model, n_heads, dropout=0.1, casual=False, bias = False):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
@@ -11,10 +11,10 @@ class BaseAttention(nn.Module, ABC):
         self.scale = numpy.sqrt(self.head_dim)
         self.casual = casual
 
-        self.Wq = nn.Linear(d_model, d_model, bias=False)
-        self.Wk = nn.Linear(d_model, d_model, bias=False)
-        self.Wv = nn.Linear(d_model, d_model, bias=False)
-        self.Wo = nn.Linear(d_model, d_model, bias=False)
+        self.Wq = nn.Linear(d_model, d_model, bias=bias)
+        self.Wk = nn.Linear(d_model, d_model, bias=bias)
+        self.Wv = nn.Linear(d_model, d_model, bias=bias)
+        self.Wo = nn.Linear(d_model, d_model, bias=bias)
 
         self.dropout = nn.Dropout(dropout)
 

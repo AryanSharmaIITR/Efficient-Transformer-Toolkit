@@ -3,8 +3,8 @@ import torch
 from .base import BaseAttention
 
 class MultiHeadAttention(BaseAttention):
-    def __init__(self, d_model, n_heads, dropout=0.1, casual=False):
-        super().__init__(d_model, n_heads, dropout, casual)
+    def __init__(self, d_model, n_heads, dropout=0.1, casual=False, bias=False):
+        super().__init__(d_model, n_heads, dropout, casual, bias)
 
     def forward(self, query, key, value, mask=None):
         batch_size = query.size(0)
