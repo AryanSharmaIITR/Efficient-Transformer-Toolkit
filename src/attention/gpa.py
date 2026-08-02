@@ -20,15 +20,6 @@ class GroupedQueryAttention(AttentionBase):
         self.W_k = nn.Linear(d_model, n_kv_heads * self.head_dim, bias=bias)
         self.W_v = nn.Linear(d_model, n_kv_heads * self.head_dim, bias=bias)
 
-        # Optionally try to import FlashAttention
-        self.flash_attn = None
-        if use_flash:
-            try:
-                from flash import FlashAttentionV2
-                self.flash_attn = FlashAttentionV2(d_model, n_heads, block_size=128, bias=bias, dropout=dropout, casual=causal)
-            except ImportError:
-                print("Warning: flash_attn not installed. Falling back to manual attention.")
-                self.use_flash = False
 
     def _reshape_kv(self, x):
         B, T, _ = x.shape
@@ -50,36 +41,23 @@ class GroupedQueryAttention(AttentionBase):
         k = k.repeat_interleave(self.n_groups, dim=1)  # [B, n_heads, T_kv, D]
         v = v.repeat_interleave(self.n_groups, dim=1)  # [B, n_heads, T_kv, D]
 
-        if self.use_flash and self.flash_attn is not None:
-            q_flash = q.transpose(1, 2)   # [B, T_q, n_heads, D]
-            k_flash = k.transpose(1, 2)   # [B, T_kv, n_heads, D]
-            v_flash = v.transpose(1, 2)   # [B, T_kv, n_heads, D]
-            out = self.flash_attn(q_flash, k_flash, v_flash)
-            out = out.transpose(1, 2).contiguous()  # [B, n_heads, T_q, D]
-        else:
-            # Manual attention (supports mask and dropout)
-            # Compute scores: [B, n_heads, T_q, T_kv]
-            scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-
-            # Apply mask
-            if mask is not None:
-                if mask.dim() == 3:
-                    mask = mask.unsqueeze(1)  # [B, 1, T_q, T_kv]
-                scores = scores.masked_fill(mask == 0, float('-inf'))
-
-            if self.causal:
-                # Create causal mask (upper triangular)
-                causal_mask = torch.triu(
-                    torch.ones(T_q, T_kv, device=scores.device),
-                    diagonal=T_kv - T_q + 1
-                ).bool()
-                scores = scores.masked_fill(causal_mask, float('-inf'))
-
-            attn = F.softmax(scores, dim=-1)
-            attn = self.dropout(attn)
-
-            out = torch.matmul(attn, v)  # [B, n_heads, T_q, D]
-
+        # Compute scores: [B, n_heads, T_q, T_kv]
+        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        # Apply mask
+        if mask is not None:
+            if mask.dim() == 3:
+                mask = mask.unsqueeze(1)  # [B, 1, T_q, T_kv]
+            scores = scores.masked_fill(mask == 0, float('-inf'))
+        if self.causal:
+            # Create causal mask (upper triangular)
+            causal_mask = torch.triu(
+                torch.ones(T_q, T_kv, device=scores.device),
+                diagonal=T_kv - T_q + 1
+            ).bool()
+            scores = scores.masked_fill(causal_mask, float('-inf'))
+        attn = F.softmax(scores, dim=-1)
+        attn = self.dropout(attn)
+        out = torch.matmul(attn, v)  # [B, n_heads, T_q, D]
         out = out.transpose(1, 2).contiguous().view(B, T_q, self.d_model)
         out = self.Wo(out)
         return out
