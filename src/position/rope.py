@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from src.attention.multiheadattention import MultiHeadAttention
 
 class RotaryPositionalEmbeddings(nn.Module):
     def __init__(self, d: int, base: int = 10_000):
@@ -41,6 +42,8 @@ class RotaryPositionalEmbeddings(nn.Module):
         x_rope = (x_rope * self.cos_cached[:seq_len]) + (neg_half_x * self.sin_cached[:seq_len])
 
         return torch.cat((x_rope, x_pass), dim=-1)
+
+class RotaryPEMultiHeadAttention(MultiHeadAttention):
 
     def __init__(self, heads: int, d_model: int, rope_percentage: float = 0.5, dropout_prob: float = 0.0):
         super().__init__(heads, d_model, dropout_prob)
