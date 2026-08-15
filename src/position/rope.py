@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from src.attention.multiheadattention import MultiHeadAttention
 
-class RotaryPositionalEmbeddings(nn.Module):
+class RotaryPositionalEmbedding(nn.Module):
     def __init__(self, d: int, base: int = 10_000):
         super().__init__()
 
@@ -49,8 +49,8 @@ class RotaryPEMultiHeadAttention(MultiHeadAttention):
         super().__init__(heads, d_model, dropout_prob)
 
         d_rope = int(self.d_k * rope_percentage)
-        self.query_rotary_pe = RotaryPositionalEmbeddings(d_rope)
-        self.key_rotary_pe = RotaryPositionalEmbeddings(d_rope)
+        self.query_rotary_pe = RotaryPositionalEmbedding(d_rope)
+        self.key_rotary_pe = RotaryPositionalEmbedding(d_rope)
 
 
     def get_scores(self, query: torch.Tensor, key: torch.Tensor):

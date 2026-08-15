@@ -1,7 +1,7 @@
 import torch
 import math
 
-def sinusoidal_position_encoding(seq_len, d_model, batch_first=True):
+def SinusoidalPositionalEncoding(d_model: int, seq_len: int, batch_first=True):
     pe = torch.zeros(seq_len, d_model)
     position = torch.arange(0, seq_len, dtype=torch.float).unsqueeze(1) 
 

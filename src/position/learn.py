@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-class postionEmbedding(nn.modules):
+class LearnedPositionalEmbedding(nn.modules):
     def __init__(self, d_model:int, max_len: int = 5000):
         super().__init__()
         self.pos_embedding = nn.Embedding(max_len, d_model)
