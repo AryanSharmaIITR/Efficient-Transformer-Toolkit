@@ -1,8 +1,9 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+from .base import BaseAttention
 
-class MultiQueryAttention(nn.Module):
+class MultiQueryAttention(BaseAttention):
     def __init__(self, d_model: int, n_heads: int, dk: int, dv: int, dropout: float = 0.0, bias: bool = False, causal: bool = False):
         super().__init__()
 

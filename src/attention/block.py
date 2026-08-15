@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
+from .base import BaseAttention
 import math
 
-class BlockSparseAttention(nn.Module):
+class BlockSparseAttention(BaseAttention):
     def __init__(self, d_model, num_heads, block_size=64, num_local_blocks=2, num_global_blocks=1, stride=2):
         super().__init__()
         self.d_model = d_model

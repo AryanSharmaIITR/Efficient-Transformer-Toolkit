@@ -1,10 +1,10 @@
 from typing import Optional
-
+from .base import BaseAttention
 import torch
 from torch import nn
 
 
-class FlashAttentionV1(nn.Module):
+class FlashAttentionV1(BaseAttention):
     def __init__(self, d_model, num_heads, block_size, bias = False, dropout=0.0, casual=False):
         super().__init__()
         self.d_model = d_model
@@ -26,10 +26,9 @@ class FlashAttentionV1(nn.Module):
     def forward(self, query, key, value, mask= None,):
             batch_size, seq_len, _ = query.shape
             
-            # Linear projections and reshape for multi-head
-            q = self._project_and_reshape(query, self.W_q)
-            k = self._project_and_reshape(key, self.W_k)
-            v = self._project_and_reshape(value, self.W_v)
+            q = self._compute_and_reshape(query, self.W_q)
+            k = self._compute_and_reshape(key, self.W_k)
+            v = self._compute_and_reshape(value, self.W_v)
             
             # Apply Flash Attention
             output = self._flash_attention_forward(q, k, v, mask)
@@ -182,7 +181,7 @@ class FlashAttentionV2(FlashAttentionV1):
         else:
             return 256
 
-class FlashAttentionWrapper(nn.Module):
+class FlashAttentionWrapper(BaseAttention):
     def __init__(self, d_model, num_heads, block_size, bias=False, dropout=0.0, casual=False, use_v2: bool = True):
         super().__init__()
         if use_v2:
