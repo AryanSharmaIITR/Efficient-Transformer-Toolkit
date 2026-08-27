@@ -1,12 +1,13 @@
-from torch.nn import nn
 import torch
+
 from .base import BaseAttention
 
-class MultiHeadAttention(BaseAttention):
-    def __init__(self, d_model, n_heads, dropout=0.1, casual=False, bias=False):
-        super().__init__(d_model, n_heads, dropout, casual, bias)
 
-    def forward(self, query, key, value, mask=None):
+class MultiHeadAttention(BaseAttention):
+    def __init__(self, d_model, n_heads, dropout=0.1, causal=False, bias=False):
+        super().__init__(d_model, n_heads, dropout, causal, bias)
+
+    def forward(self, query, key, value, mask=None, positions=None):
         batch_size = query.size(0)
 
         Q = self.Wq(query)
@@ -19,13 +20,13 @@ class MultiHeadAttention(BaseAttention):
 
         scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale
 
+        mask = self._normalize_mask(mask)
         if mask is not None:
-            scores = scores.masked_fill(mask == 0, float('-inf'))
+            scores = scores.masked_fill(mask == 0, float("-inf"))
 
-        if self.casual:
-            seq_len = scores.size(-1)
-            casual_mask = torch.tril(torch.ones(seq_len, seq_len)).to(scores.device)
-            scores = scores.masked_fill(casual_mask == 0, float('-inf'))
+        if self.causal:
+            causal_mask = self._get_causal_mask(Q.size(-2), K.size(-2), scores.device)
+            scores = scores.masked_fill(causal_mask, float("-inf"))
 
         attn_weights = torch.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights)

@@ -1,19 +1,32 @@
 import math
-import torch
-from torch import nn
-from .multiheadattention import MultiHeadAttention
 
-def get_slope(n_heads):
-    """Compute ALiBi slopes for each head."""
-    n = 2 ** math.floor(math.log2(n_heads))
-    m_0 = 2.0 ** (-8.0 / n)
-    m = torch.pow(m_0, torch.arange(1, 1 + n))
-    if n < n_heads:
-        m_start = 2.0 ** (-4.0 / n)
-        m_end = 2.0 ** (-8.0 / n_heads)
-        m_rest = torch.pow(m_start, torch.arange(1, 1 + (n_heads - n)))
-        m = torch.cat([m, m_rest])
-    return m
+import torch
+import torch.nn.functional as F
+
+from .base import BaseAttention
+
+
+def get_slope(n_heads: int) -> torch.Tensor:
+    """Compute ALiBi head slopes (Press et al., 2021).
+
+    Matches the paper's reference implementation exactly, including the
+    interleaved fallback for head counts that aren't a power of 2: the
+    extra slopes are every *other* value of the geometric sequence for the
+    next power of 2 up, not a fresh sequence starting back at index 1.
+    """
+    def _slopes_power_of_2(n: int) -> list[float]:
+        start = 2.0 ** (-8.0 / n)
+        return [start ** i for i in range(1, n + 1)]
+
+    if math.log2(n_heads).is_integer():
+        slopes = _slopes_power_of_2(n_heads)
+    else:
+        closest_pow2 = 2 ** math.floor(math.log2(n_heads))
+        slopes = _slopes_power_of_2(closest_pow2)
+        extra = get_slope(2 * closest_pow2).tolist()[0::2][: n_heads - closest_pow2]
+        slopes = slopes + extra
+    return torch.tensor(slopes, dtype=torch.float32)
+
 
 @torch.no_grad()
 def build_alibi_tensor(n_heads: int, seq_len: int, device: torch.device, dtype: torch.dtype):
@@ -25,56 +38,54 @@ def build_alibi_tensor(n_heads: int, seq_len: int, device: torch.device, dtype: 
     bias = -slopes[:, None, None] * distance[None, :, :]
     return bias.unsqueeze(0)
 
-class Alibi(MultiHeadAttention):
-    def __init__(self, d_model: int, n_heads: int, dropout=0.1, bias: bool = False, causal: bool = True, max_seq_len: int = 512):
+
+class Alibi(BaseAttention):
+    def __init__(self, d_model: int, n_heads: int, dropout=0.1, bias=False, causal=True, max_seq_len=512):
         super().__init__(d_model, n_heads, dropout, causal, bias)
-        self.causal = causal
         self.max_seq_len = max_seq_len
-        self.register_buffer('alibi_bias', None)  # will be (1, n_heads, L, L)
+        self.register_buffer("alibi_bias", None)
 
-    def forward(self, query, key, value, mask=None):
+    def forward(self, query, key, value, mask=None, positions=None):
         batch_size, seq_len, _ = query.shape
+        kv_seq_len = key.shape[1]
 
-        # Linear projections
-        Q = self.W_Q(query)
-        K = self.W_K(key)
-        V = self.W_V(value)
+        Q = self.Wq(query)
+        K = self.Wk(key)
+        V = self.Wv(value)
 
-        # Reshape to (batch, n_heads, seq_len, head_dim)
         Q = self._reshape(Q)
         K = self._reshape(K)
         V = self._reshape(V)
 
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale  # (batch, n_heads, seq_len, seq_len)
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale
 
-        # Build or update the bias cache if sequence length changed
-        if self.alibi_bias is None or self.alibi_bias.size(-1) < seq_len:
+        max_len = max(seq_len, kv_seq_len)
+        cache = self.alibi_bias
+        if (
+            cache is None
+            or cache.size(-1) < max_len
+            or cache.device != query.device
+            or cache.dtype != query.dtype
+        ):
             self.alibi_bias = build_alibi_tensor(
-                self.n_heads, seq_len, query.device, query.dtype
+                self.n_heads, max_len, query.device, query.dtype
             )
 
-        alibi = self.alibi_bias[:, :, :seq_len, :seq_len]
+        alibi = self.alibi_bias[:, :, :seq_len, :kv_seq_len]
         scores = scores + alibi
 
+        mask = self._normalize_mask(mask)
         if mask is not None:
-            if mask.dim() == 2:  # (batch, seq_len)
-                mask = mask.unsqueeze(1).unsqueeze(2)  # (batch, 1, 1, seq_len)
-            # For padding, we want to mask positions where mask == 0
-            scores = scores.masked_fill(mask == 0, float('-inf'))
+            scores = scores.masked_fill(mask == 0, float("-inf"))
 
         if self.causal:
-            # Create a triangular mask for the current sequence length
-            causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=scores.device, dtype=torch.bool))
-            # Expand to (1, 1, seq_len, seq_len) for broadcasting
-            causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, seq_len)
-            scores = scores.masked_fill(~causal_mask, float('-inf'))
+            causal_mask = self._get_causal_mask(seq_len, kv_seq_len, scores.device)
+            scores = scores.masked_fill(causal_mask, float("-inf"))
 
-        # Attention weights and dropout
-        attn_weight = self.softmax(scores)
+        attn_weight = F.softmax(scores, dim=-1)
         attn_weight = self.dropout(attn_weight)
 
-        # Apply attention to values
-        output = torch.matmul(attn_weight, V)  # (batch, n_heads, seq_len, head_dim)
+        output = torch.matmul(attn_weight, V)
 
         output = output.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
 

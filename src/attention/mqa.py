@@ -1,53 +1,49 @@
+import math
+
 import torch
 from torch import nn
 from torch.nn import functional as F
+
 from .base import BaseAttention
 
+
 class MultiQueryAttention(BaseAttention):
-    def __init__(self, d_model: int, n_heads: int, dk: int, dv: int, dropout: float = 0.0, bias: bool = False, causal: bool = False):
-        super().__init__()
+    def __init__(self, d_model: int, n_heads: int, dk: int, dv: int, dropout=0.0, bias=False, causal=False):
+        super().__init__(d_model, n_heads, dropout, causal, bias)
 
         self.dk = dk
         self.dv = dv
-        self.n_heads = n_heads
-        self.causal = causal
-        self.scale = torch.sqrt(torch.tensor(dk, dtype=torch.float32))
-        self.dropout = nn.Dropout(dropout)
+        self.scale = math.sqrt(dk)
 
-        self.Wk = nn.Linear(d_model, self.dk , bias=bias)
-        self.Wq = nn.Linear(d_model, self.dk * self.n_heads, bias=bias)
+        self.Wk = nn.Linear(d_model, dk, bias=bias)
+        self.Wq = nn.Linear(d_model, dk * n_heads, bias=bias)
+        self.Wv = nn.Linear(d_model, dv, bias=bias)
+        self.Wo = nn.Linear(dv * n_heads, d_model, bias=bias)
 
-        self.Wv = nn.Linear(d_model, self.dv , bias=bias)
-        self.Wo = nn.Linear(self.dv * self.n_heads, d_model, bias=bias)
+    def forward(self, query, key, value, mask=None, positions=None):
+        Q = self.Wq(query)
+        K = self.Wk(key)
+        V = self.Wv(value)
 
-    def forward(self, query, key, value, mask) -> torch.Tensor:
+        Q = Q.view(Q.size(0), Q.size(1), self.n_heads, self.dk).transpose(1, 2)
+        K = K.unsqueeze(1)
+        V = V.unsqueeze(1)
 
-        Q = self.Wq(query)  # (B, L, n_heads * dk)
-        K = self.Wk(key)    # (B, L, dk)
-        V = self.Wv(value)  # (B, L, dv)
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale
 
-        Q =  Q.view(Q.size(0), Q.size(1), self.n_heads, self.dk).transpose(1, 2)  # (B, n_heads, L, dk)
-        K =  K.unsqueeze(1)  # (B, 1, L, dk)
-        V =  V.unsqueeze(1)  # (B, 1, L, dv)
-
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale  # (B, n_heads, L, L)
-
+        mask = self._normalize_mask(mask)
         if mask is not None:
-            scores = scores.masked_fill(mask == 0, float('-inf'))
+            scores = scores.masked_fill(mask == 0, float("-inf"))
 
-        if self.casual:
-            causal_mask = torch.tril(torch.ones(scores.size(-2), scores.size(-1), device=scores.device)).unsqueeze(0).unsqueeze(0)
-            scores = scores.masked_fill(causal_mask == 0, float('-inf'))
+        if self.causal:
+            causal_mask = self._get_causal_mask(scores.size(-2), scores.size(-1), scores.device)
+            scores = scores.masked_fill(causal_mask, float("-inf"))
 
         attn_weights = F.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
 
-        output = torch.matmul(attn_weights, V)  # (B, n_heads, L, dv)
-        output = output.transpose(1, 2).contiguous().view(output.size(0), output.size(2), self.n_heads * self.dv)  # (B, L, n_heads * dv)
-        output = self.Wo(output)  # (B, L, d_model) 
+        output = torch.matmul(attn_weights, V)
+        output = output.transpose(1, 2).contiguous().view(output.size(0), output.size(2), self.n_heads * self.dv)
+        output = self.Wo(output)
 
         return output
-
-        
-
-
