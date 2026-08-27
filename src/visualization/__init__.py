@@ -1,0 +1,63 @@
+from .attention_map import (
+    AttentionExtractor,
+    compute_attention_manually,
+    plot_attention_grid,
+    plot_attention_heatmap,
+    plot_head_importance,
+    plot_layer_comparison,
+)
+from .comparison_plots import (
+    plot_all,
+    plot_latency_comparison,
+    plot_latency_vs_params,
+    plot_macs_vs_latency,
+    plot_memory_comparison,
+    plot_param_comparison,
+    plot_radar_chart,
+    plot_throughput_comparison,
+)
+from .dashboard import (
+    create_benchmark_dashboard,
+    create_comparison_dashboard,
+    create_model_profile_dashboard,
+    save_dashboard,
+)
+from .interactive import (
+    interactive_dashboard,
+    interactive_heatmap,
+    interactive_latency_chart,
+    interactive_param_chart,
+    interactive_radar,
+    interactive_scatter,
+    save_interactive,
+    show,
+)
+
+__all__ = [
+    "AttentionExtractor",
+    "compute_attention_manually",
+    "create_benchmark_dashboard",
+    "create_comparison_dashboard",
+    "create_model_profile_dashboard",
+    "interactive_dashboard",
+    "interactive_heatmap",
+    "interactive_latency_chart",
+    "interactive_param_chart",
+    "interactive_radar",
+    "interactive_scatter",
+    "plot_all",
+    "plot_attention_grid",
+    "plot_attention_heatmap",
+    "plot_head_importance",
+    "plot_latency_comparison",
+    "plot_latency_vs_params",
+    "plot_layer_comparison",
+    "plot_macs_vs_latency",
+    "plot_memory_comparison",
+    "plot_param_comparison",
+    "plot_radar_chart",
+    "plot_throughput_comparison",
+    "save_dashboard",
+    "save_interactive",
+    "show",
+]
