@@ -1,0 +1,153 @@
+# ============================================================================
+# Efficient-Transformer-Toolkit — Master Configuration
+# ============================================================================
+# Single source of truth for all hyperparameters. Keys map directly to
+# TransformerConfig (src/models/transformer.py) and TrainerConfig
+# (src/training/trainer.py).
+#
+# Usage:
+#   config = load_config("configs/default_config.yaml")
+#   model_cfg = TransformerConfig(**config["model"])
+#   trainer_cfg = TrainerConfig(**config["training"])
+#
+# Or with the CLI (flat keys):
+#   python scripts/run_train.py --config configs/default_config.yaml
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Model Architecture  (maps to TransformerConfig dataclass)
+# ---------------------------------------------------------------------------
+model:
+  vocab_size: 50257                  # vocabulary size (50257 for GPT-2 tokenizer)
+  d_model: 384                       # model embedding / hidden dimension (reduced for 4GB VRAM)
+  dk: 64                             # query/key head dim (used by MQA)
+  dv: 64                             # value head dim (used by MQA)
+  n_heads: 6                         # number of attention heads (d_model / dk)
+  n_layers: 6                        # number of transformer layers
+  d_ff: 1536                         # feed-forward inner dim (4 * d_model if null)
+  dropout: 0.1                       # dropout probability (0.0 for inference)
+  eps: 1.0e-5                        # LayerNorm epsilon
+  max_seq_len: 512                   # maximum sequence length (positional encoding range)
+  # Options: "flashv1", "flashv2", "alibi", "gqa", "mqa"
+  attn_type: "flashv2"               # attention mechanism variant
+  # Options: "rope", "sinusoidal", "learned", or null for none
+  # "rope" selects RotaryPEMultiHeadAttention (plain MHA + rotary Q/K),
+  # which overrides attn_type above -- see get_attention() in
+  # src/models/transformer.py.
+  pos_encoding: "rope"                # positional encoding scheme
+  # Number of KV heads: for GQA set to <n_heads (e.g. 4), for MQA set to 1
+  n_kv_heads: 6                      # (auto-set to n_heads if null; forced to 1 for MQA)
+  causal: true                       # causal (autoregressive) masking
+  use_flash: true                    # enable flash-attention kernel dispatch
+  tie_embeddings: true               # tie token embedding and LM head weights
+  use_bias: false                    # include bias terms in linear layers
+  # Options: "gelu", "relu", "silu", "swiglu"
+  ffn_activation: "swiglu"           # feed-forward activation function
+  ffn_expansion: 4                   # FFN hidden-dim multiplier (4 = 4x d_model)
+  # Options: "pre" (Pre-LN), "post" (Post-LN / vanilla)
+  layer_norm_type: "pre"             # layer normalisation placement
+
+# ---------------------------------------------------------------------------
+# Training Configuration  (maps to TrainerConfig dataclass)
+# ---------------------------------------------------------------------------
+training:
+  # -- Optimiser
+  lr: 3.0e-4                         # peak learning rate
+  weight_decay: 0.01                 # AdamW weight decay
+  betas: [0.9, 0.999]                # Adam betas (momentum / second moment)
+  eps: 1.0e-8                        # Adam epsilon (numerical stability)
+  max_grad_norm: 1.0                 # gradient clipping max-norm (0 = disabled)
+
+  # -- Schedule
+  schedule: "cosine"                 # LR schedule: "cosine", "linear", "constant"
+  warmup_ratio: 0.03                 # fraction of total steps used for linear warmup
+  min_lr_ratio: 0.1                  # minimum LR as fraction of peak LR (cosine floor)
+
+  # -- Loop
+  num_epochs: 10                     # total training epochs
+  gradient_accumulation_steps: 8     # micro-batches to accumulate before each optimiser step (effective batch = batch_size * this)
+  use_amp: true                      # automatic mixed-precision (FP16/BF16) on CUDA
+
+  # -- Checkpointing
+  output_dir: "outputs/checkpoints"  # root directory for saved checkpoints
+  save_every: 500                    # save a checkpoint every N global steps (0 = disabled)
+  keep_last: 3                       # number of recent regular checkpoints to retain
+
+  # -- Early stopping
+  early_stopping_patience: null      # stop after N evals with no improvement (null = disabled)
+  early_stopping_metric: "val_loss"  # metric name to monitor
+  early_stopping_higher_is_better: false  # whether a larger metric value is better
+
+  # -- Logging
+  log_every: 10                      # log training metrics every N global steps
+  eval_every: null                   # run validation every N epochs (null = only final epoch)
+
+  # -- Device / DDP
+  device: "cuda"                     # target device: "cuda", "cpu", or "mps"
+  compile_model: false               # use torch.compile() (PyTorch 2.0+)
+  ddp: false                         # distributed data-parallel (multi-GPU)
+
+  # -- Model type (controls loss computation)
+  model_type: "decoder_only"         # "encoder_only", "decoder_only", "encoder_decoder"
+
+# ---------------------------------------------------------------------------
+# Data Configuration
+# ---------------------------------------------------------------------------
+data:
+  # -- Dataset location (local files)
+  dataset_name: "wikitext-2"         # human-readable name for logging
+  dataset_path: "datasets/wikitext-2"  # root directory relative to project root
+  train_file: "wiki.train_processed.txt"    # training split filename
+  valid_file: "wiki.valid.tokens"    # validation split filename
+  test_file: "wiki.test.tokens"      # test split filename
+
+  # -- Tokeniser
+  tokenizer_name: "gpt2"             # HuggingFace tokenizer identifier or local path
+  padding_side: "right"              # pad to which side: "right" (causal LM) or "left"
+
+  # -- Sequencing
+  max_seq_length: 512                # maximum token sequence length per sample (reduced for 4GB VRAM)
+  stride: 256                        # sliding-window stride for long docs (0 = no overlap)
+  val_split: 0.05                    # fraction of training data held out for validation
+
+  # -- DataLoader
+  batch_size: 2                      # per-GPU / per-device batch size (reduced for 4GB VRAM; see gradient_accumulation_steps)
+  num_workers: 0                     # DataLoader worker processes (0 = main thread)
+
+# ---------------------------------------------------------------------------
+# Benchmark Configuration  (used by scripts/run_benchmark.py / profiler.py)
+# ---------------------------------------------------------------------------
+benchmark:
+  seq_lengths: [128, 256, 512, 1024, 2048]  # sequence lengths to profile
+  iterations: 100                    # timed forward-pass runs per config
+  warmup: 10                         # untimed warmup runs before measurement
+  batch_size: 1                      # batch size during benchmarking
+  output_dir: "outputs/reports/"     # JSON / CSV benchmark results
+  plot_dir: "outputs/plots/"         # generated comparison charts
+  # Attention types to compare head-to-head
+  compare_attentions: ["flashv2", "alibi", "gqa", "mqa"]
+  device: "cuda"                     # benchmark device
+  dtypes: ["fp16", "fp32"]           # precision modes to evaluate
+
+# ---------------------------------------------------------------------------
+# Inference / Generation Configuration
+# (maps to Transformer.generate() keyword arguments)
+# ---------------------------------------------------------------------------
+inference:
+  max_new_tokens: 100                # maximum tokens to generate beyond the prompt
+  temperature: 0.8                   # sampling temperature (1.0 = no scaling)
+  top_k: 40                          # top-k filtering (0 = disabled)
+  top_p: 0.9                         # nucleus sampling threshold (0.0 = disabled)
+  do_sample: true                    # true = stochastic sampling, false = greedy
+  repetition_penalty: 1.1            # repetition penalty (>1.0 discourages repeats)
+  pad_token_id: null                 # padding token ID (stop generation on this token)
+  eos_token_id: null                 # end-of-sequence token ID (stop generation on this token)
+
+# ---------------------------------------------------------------------------
+# Logging Configuration
+# ---------------------------------------------------------------------------
+logging:
+  tensorboard: true                  # log to TensorBoard
+  wandb: false                       # log to Weights & Biases
+  wandb_project: "efficient-transformer-toolkit"  # W&B project name
+  wandb_run_name: null               # W&B run name (null = auto-generated)

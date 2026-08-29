@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# Efficient-Transformer-Toolkit — docker-compose configuration
+# ---------------------------------------------------------------------------
+# Usage:
+#   docker-compose up --build          # build & start
+#   docker-compose up -d               # detached
+#   docker-compose down                # stop & remove
+# ---------------------------------------------------------------------------
+
+services:
+  transformer-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: transformer_toolkit
+    ports:
+      - "8888:8888"
+    volumes:
+      - ../:/app                       # live-sync source code
+      - ../data:/app/data              # persist datasets across rebuilds
+      - ../outputs:/app/outputs        # persist training outputs
+      - model-cache:/app/.cache        # cache downloaded models/tokenizers
+    working_dir: /app
+    command: >
+      jupyter lab
+        --ip=0.0.0.0
+        --port=8888
+        --no-browser
+        --allow-root
+        --NotebookApp.token=''
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TORCH_HOME=/app/.cache
+      - CUDA_VISIBLE_DEVICES=all
+
+volumes:
+  model-cache:
+    driver: local

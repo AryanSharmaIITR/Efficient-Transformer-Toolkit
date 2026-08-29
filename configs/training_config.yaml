@@ -1,0 +1,47 @@
+# ============================================================================
+# Training Config — Quick Debug / Prototyping
+# ============================================================================
+# Inherits everything from default_config.yaml and overrides only the
+# fields listed below. Use for fast iteration on small models.
+#
+# Usage:
+#   python scripts/run_train.py --config configs/training_config.yaml
+# ============================================================================
+
+model:
+  d_model: 256
+  n_heads: 4
+  n_layers: 2
+  d_ff: 1024
+  max_seq_len: 512
+  attn_type: "flashv2"
+  pos_encoding: "rope"
+  causal: true
+  ffn_activation: "swiglu"
+  layer_norm_type: "pre"
+
+training:
+  lr: 3.0e-4
+  num_epochs: 5
+  save_every: 500
+  log_every: 50
+  eval_every: 500
+  output_dir: "outputs/checkpoints/debug"
+
+data:
+  # This file claims to "inherit everything from default_config.yaml" but
+  # run_train.py only ever loads a single YAML file (no merging between
+  # configs) -- without dataset_path/train_file here, args.data_path stays
+  # unset and _build_dataloaders() raises "--data_path is required".
+  dataset_path: "datasets/wikitext-2"
+  train_file: "wiki.train_processed.txt"
+  tokenizer_name: "gpt2"
+  max_seq_len: 256
+  stride: 128
+  val_split: 0.05
+  batch_size: 16
+  num_workers: 0
+
+logging:
+  tensorboard: true
+  wandb: false

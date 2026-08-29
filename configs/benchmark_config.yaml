@@ -1,0 +1,33 @@
+# ============================================================================
+# Benchmark Config — Attention Variant Comparison
+# ============================================================================
+# Dedicated configuration for `scripts/run_benchmark.py`. Controls which
+# attention types to profile, across which sequence lengths, and where
+# to write results.
+#
+# Usage:
+#   python scripts/run_benchmark.py --config configs/benchmark_config.yaml
+# ============================================================================
+
+model:
+  d_model: 768
+  n_heads: 12
+  n_layers: 6
+  max_seq_len: 4096
+  dropout: 0.0
+  causal: true
+  use_flash: true
+  ffn_activation: "swiglu"
+  layer_norm_type: "pre"
+
+benchmark:
+  seq_lengths: [128, 256, 512, 1024, 2048, 4096]
+  iterations: 50
+  warmup: 5
+  batch_size: 1
+  output_dir: "outputs/reports/"
+  plot_dir: "outputs/plots/"
+  # Attention types to benchmark against each other
+  compare_attentions: ["flashv2", "alibi", "gqa", "mqa"]
+  device: "cuda"
+  dtypes: ["fp16", "fp32"]

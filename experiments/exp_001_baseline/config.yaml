@@ -1,0 +1,52 @@
+# ============================================================================
+# Experiment: exp_001_baseline
+# Description: Baseline decoder-only transformer with vanilla multi-head attention.
+# Usage:
+#   python scripts/run_train.py --config experiments/exp_001_baseline/config.yaml
+# ============================================================================
+
+# --- Model ---
+model_type: decoder_only
+vocab_size: 10000
+d_model: 256
+n_heads: 4
+n_layers: 4
+d_ff: 1024
+max_seq_len: 512
+attn_type: flashv2
+use_flash: false
+pos_encoding: rope
+dropout: 0.1
+causal: true
+ffn_activation: swiglu
+layer_norm_type: pre
+
+# --- Data ---
+tokenizer_name: gpt2
+max_seq_len_data: 512
+stride: 256
+val_split: 0.05
+batch_size: 8
+num_workers: 0
+
+# --- Optimizer ---
+lr: 3.0e-4
+weight_decay: 0.01
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+
+# --- Trainer ---
+num_epochs: 10
+gradient_accumulation_steps: 1
+use_amp: true
+device: cuda
+seed: 42
+output_dir: outputs/checkpoints/exp_001_baseline
+save_every: 500
+log_every: 10
+eval_every: 1
+
+# --- Logging ---
+tensorboard: true
+wandb: false
+wandb_project: efficient-transformer-toolkit

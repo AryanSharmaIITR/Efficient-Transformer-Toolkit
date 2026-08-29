@@ -1,0 +1,31 @@
+The transformer architecture revolutionized natural language processing by introducing
+the self-attention mechanism. Self-attention allows each token in a sequence to attend
+to all other tokens, capturing long-range dependencies efficiently.
+
+FlashAttention is an IO-aware algorithm that computes exact attention using
+block-wise processing. It reduces memory usage from quadratic to linear in
+sequence length while providing significant wall-clock speedups.
+
+Grouped Query Attention shares key and value heads across groups of query heads,
+reducing the KV cache size during autoregressive generation. This makes inference
+more memory-efficient without significant quality degradation.
+
+ALiBi encodes position information directly into attention scores using linear
+biases proportional to token distance. Unlike learned positional embeddings,
+ALiBi can extrapolate to sequences longer than those seen during training.
+
+Mixture of Experts activates only a subset of feed-forward parameters for each
+token, allowing models to scale to trillions of parameters while keeping
+per-token compute manageable.
+
+Knowledge distillation transfers knowledge from a large teacher model to a
+smaller student model. The student learns to match the teacher's output
+distribution, achieving competitive performance with fewer parameters.
+
+Quantization reduces model weights from 32-bit floating point to lower
+precision formats like 8-bit integers or 4-bit normals. This dramatically
+reduces memory footprint and can accelerate inference on compatible hardware.
+
+Rotary Position Embeddings encode relative position information by rotating
+query and key vectors in 2D subspaces. The rotation angle is proportional to
+the absolute position, and the dot product naturally captures relative distances.
