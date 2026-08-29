@@ -88,11 +88,12 @@ class CachedAttention(nn.Module):
     3. Runs scaled-dot-product attention (with optional causal masking).
     4. Projects the output through ``Wo``.
 
-    Only supports plain scaled-dot-product attention with matching Q/K/V
-    head counts (``MultiHeadAttention`` / ``FlashAttentionWrapper``) -- it
-    has no rotary-embedding, ALiBi-bias, or grouped/shared-KV logic, so
-    ``enable_kv_cache()`` refuses to wrap RoPE/ALiBi/GQA/MQA attention
-    modules rather than silently generating wrong output for them.
+    Supports plain scaled-dot-product attention with matching Q/K/V head
+    counts (``MultiHeadAttention`` / ``FlashAttentionWrapper``) as well as
+    rotary-position-embedded attention (``RotaryPEMultiHeadAttention``).
+    It has no ALiBi-bias or grouped/shared-KV logic, so
+    ``enable_kv_cache()`` refuses to wrap ALiBi/GQA/MQA attention modules
+    rather than silently generating wrong output for them.
     """
 
     def __init__(self, original: nn.Module, layer_idx: int = 0) -> None:
@@ -107,6 +108,14 @@ class CachedAttention(nn.Module):
         self.scale: float = original.scale
         self.default_causal: bool = getattr(original, "causal", True)
 
+        # Rotary position components (present on RotaryPEMultiHeadAttention).
+        # They expect sequence-first tensors and absolute positions; kept so
+        # the cached path can rotate the new token's Q/K at its true
+        # absolute position (the cached keys were already rotated when they
+        # were first stored).
+        self.query_rotary_pe = getattr(original, "query_rotary_pe", None)
+        self.key_rotary_pe = getattr(original, "key_rotary_pe", None)
+
         # Which cache to read/write and under what key. `kv_cache` is
         # instance state (not just a forward() kwarg) because
         # TransformerDecoderLayer.forward() calls self.self_attn(...) with
@@ -117,6 +126,29 @@ class CachedAttention(nn.Module):
         # instead of forward()'s kv_cache= default silently staying None.
         self._cache_layer_idx = layer_idx
         self.kv_cache: KVCache | None = None
+
+    # ------------------------------------------------------------------
+    def _apply_rope(
+        self,
+        x: torch.Tensor,
+        positions: torch.Tensor | None,
+        rotary_pe: nn.Module | None,
+    ) -> torch.Tensor:
+        """Apply rotary position embedding to a ``[B, n_heads, T, head_dim]``
+        tensor (batch-first, this wrapper's layout), returning the same
+        layout.
+
+        ``RotaryPositionalEmbedding`` works sequence-first
+        (``[T, B, n_heads, head_dim]``) and takes absolute positions, so the
+        tensor is permuted before and after. With ``rotary_pe is None`` (a
+        non-rotary module) this is a no-op.
+        """
+        if rotary_pe is None:
+            return x
+        B, n_h, T, hd = x.shape
+        x_seq = x.permute(2, 0, 1, 3)  # [T, B, n_heads, head_dim]
+        x_seq = rotary_pe(x_seq, positions)
+        return x_seq.permute(1, 2, 0, 3)  # [B, n_heads, T, head_dim]
 
     # ------------------------------------------------------------------
     def forward(
@@ -137,10 +169,12 @@ class CachedAttention(nn.Module):
             query, key, value: raw hidden states ``[B, T, d_model]``.
             mask: unused in the cached path (causal mask is generated
                 automatically when ``causal=True``).
-            positions: unused here (this wrapper doesn't support
-                rotary-position attention); accepted so the encoder/decoder
-                layers can call every attention module with the same
-                positional signature.
+            positions: absolute token positions used to apply rotary
+                embeddings to Q and new keys when the wrapped attention is
+                rotary (``RotaryPEMultiHeadAttention``). ``None`` means
+                "assume sequential positions 0..T-1", which is correct for
+                a fresh prefill; during incremental decode the engine passes
+                the new token's absolute position.
             causal: whether to apply a causal mask. Defaults to the
                 wrapped module's own ``causal`` setting.
             kv_cache: shared cache object; overrides ``self.kv_cache`` (the
@@ -169,6 +203,11 @@ class CachedAttention(nn.Module):
             T_new = K_new.size(1)
             K_new = K_new.view(-1, T_new, self.n_heads, self.head_dim).transpose(1, 2)
             V_new = V_new.view(-1, T_new, self.n_heads, self.head_dim).transpose(1, 2)
+            # Rotate the new keys at their true absolute positions before
+            # caching: keys already in the cache were rotated when first
+            # stored, and rotary is a fixed function of absolute position,
+            # so appending freshly-rotated keys is exactly correct.
+            K_new = self._apply_rope(K_new, positions, self.key_rotary_pe)
             K, V = kv_cache.update(layer_idx, K_new, V_new)
         else:
             K = self.Wk(key)
@@ -180,11 +219,15 @@ class CachedAttention(nn.Module):
             T_kv = K.size(1)
             K = K.view(-1, T_kv, self.n_heads, self.head_dim).transpose(1, 2)
             V = V.view(-1, T_kv, self.n_heads, self.head_dim).transpose(1, 2)
+            # Also rotate when caching is off so this wrapper never silently
+            # drops rotary semantics for a rotary model.
+            K = self._apply_rope(K, positions, self.key_rotary_pe)
 
         B, T_q, _ = Q.shape
         T_k = K.size(2)
 
         Q = Q.view(B, T_q, self.n_heads, self.head_dim).transpose(1, 2)
+        Q = self._apply_rope(Q, positions, self.query_rotary_pe)
 
         # Use is_causal only when query and key have the same length (full
         # sequence attention).  During incremental decode T_q == 1 while
@@ -253,13 +296,13 @@ def enable_kv_cache(model: nn.Module) -> None:
         logger.warning("Model has no decoder; KV-cache has no effect.")
         return
 
-    # CachedAttention only replicates plain scaled-dot-product attention
+    # CachedAttention replicates plain scaled-dot-product attention
     # (MultiHeadAttention / FlashAttentionWrapper with matching Q/K/V head
-    # counts). It has no rotary-embedding, ALiBi-bias, or grouped/shared-KV
-    # logic, so wrapping those variants wouldn't just be suboptimal --
-    # it would silently produce wrong generations (e.g. RoPE rotation
-    # never applied). Fail loudly instead.
-    _UNSUPPORTED = {"RotaryPEMultiHeadAttention", "Alibi", "GroupedQueryAttention", "MultiQueryAttention"}
+    # counts) and rotary-position-embedded attention
+    # (RotaryPEMultiHeadAttention). It has no ALiBi-bias or grouped/shared-KV
+    # logic, so wrapping those variants wouldn't just be suboptimal -- it
+    # would silently produce wrong generations. Fail loudly instead.
+    _UNSUPPORTED = {"Alibi", "GroupedQueryAttention", "MultiQueryAttention"}
     for idx, layer in enumerate(decoder.layers):
         cls_name = type(layer.self_attn).__name__
         if cls_name in _UNSUPPORTED:
@@ -604,13 +647,28 @@ class InferenceEngine:
         """
         # Tokenize if necessary.
         if tokenizer is not None and len(prompts) > 0 and isinstance(prompts[0], str):
-            encodings = tokenizer(
-                prompts,  # type: ignore[arg-type]
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-            )
-            input_ids = self._to_device(encodings["input_ids"])
+            if callable(tokenizer):
+                encodings = tokenizer(
+                    prompts,  # type: ignore[arg-type]
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                )
+                input_ids = self._to_device(encodings["input_ids"])
+            elif hasattr(tokenizer, "encode"):
+                # Wrapper tokenizers (e.g. Tokenizer) expose ``encode``,
+                # ``pad_batch`` instead of ``__call__``.
+                ids_list = tokenizer.encode(prompts)  # type: ignore[attr-defined]
+                if isinstance(ids_list, torch.Tensor):
+                    input_ids = ids_list
+                else:
+                    padded = tokenizer.pad_batch(ids_list)  # type: ignore[attr-defined]
+                    input_ids = self._to_device(padded["input_ids"])
+            else:
+                raise TypeError(
+                    "tokenizer must be callable (HuggingFace) or expose "
+                    "encode() / pad_batch() (wrapper).",
+                )
         else:
             # Pad pre-tokenized inputs to equal length.
             assert isinstance(prompts[0], list), "prompts must be str or list[int]"
